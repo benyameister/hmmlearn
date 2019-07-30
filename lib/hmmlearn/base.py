@@ -97,7 +97,7 @@ class ConvergenceMonitor(object):
         is thus denoted by NaN.
 
         Parameters
-        ----------
+        -------------
         logprob : float
             The log probability of the data as computed by EM algorithm
             in the current iteration.
@@ -121,7 +121,7 @@ class ConvergenceMonitor(object):
 
 
 class _BaseHMM(BaseEstimator):
-    r"""Base class for Hidden Markov Models.
+    """Base class for Hidden Markov Models.
 
     This class allows for easy evaluation of, sampling from, and
     maximum a posteriori estimation of the parameters of a HMM.
@@ -214,8 +214,63 @@ class _BaseHMM(BaseEstimator):
         eigvec = np.real_if_close(eigvecs[:, np.argmax(eigvals)])
         return eigvec / eigvec.sum()
 
-    def score_samples(self, X, lengths=None):
+    def score_samples_fwd(self, X, lengths=None):
         """Compute the log probability under the model and compute posteriors.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Feature matrix of individual samples.
+
+        lengths : array-like of integers, shape (n_sequences, ), optional
+            Lengths of the individual sequences in ``X``. The sum of
+            these should be ``n_samples``.
+
+        Returns
+        -------
+        logprob : float
+            Log likelihood of ``X``.
+
+        posteriors : array, shape (n_samples, n_components)
+            State-membership probabilities for each sample in ``X``.
+
+        See Also
+        --------
+        score : Compute the log probability under the model.
+        decode : Find most likely state sequence corresponding to ``X``.
+        """
+        check_is_fitted(self, "startprob_")
+        self._check()
+
+        X = check_array(X)
+        n_samples = X.shape[0]
+        logprob = 0
+        posteriors = np.zeros((n_samples, self.n_components))
+        for i, j in iter_from_X_lengths(X, lengths):
+            framelogprob = self._compute_log_likelihood(X[i:j])
+            logprobij, fwdlattice = self._do_forward_pass(framelogprob)
+            logprob += logprobij
+
+            posteriors[i:j] = self._compute_fwdposteriors(fwdlattice)
+        return logprob, posteriors
+    
+    def _compute_fwdposteriors(self,fwdlattice):
+        ''' Compute posterior probabilities using only the forward algorithm
+        Author: Benyamin Meschede-Krasa
+        '''
+        # gamma is guaranteed to be correctly normalized by logprob at
+        # all frames, unless we do approximate inference using pruning.
+        # So, we will normalize each frame explicitly in case we
+        # pruned too aggressively.
+        log_gamma = fwdlattice
+        log_normalize(log_gamma, axis=1)
+        with np.errstate(under="ignore"):
+            return np.exp(log_gamma)
+
+    def score_samples(self, X, lengths=None):
+        """Compute the log probability under the model and compute posteriors using only the forward algorithm.
+        author: Benyamin meschede-Krasa (bmeschkra@gmail.com)
+        In order to be able to use the algorithm in an online fashion, I have removed the backward pass
 
         Parameters
         ----------
